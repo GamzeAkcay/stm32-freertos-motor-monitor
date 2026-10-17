@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 #include "FreeRTOS.h"
 #include "task.h"
+#include "queue.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -50,7 +51,7 @@ const osThreadAttr_t defaultTask_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
-
+static QueueHandle_t btnQueue;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -68,10 +69,10 @@ static void TaskA(void *arg)
 {
   (void)arg;
   for (;;) {
-    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
-    HAL_Delay(30);                                  // 30 ms "iş" (CPU'yu meşgul eder)
-    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
-    vTaskDelay(pdMS_TO_TICKS(100));
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);    // yeşil yan
+    HAL_Delay(1000);                                        // 1 saniye "çalış"
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);  // yeşil sön
+    vTaskDelay(pdMS_TO_TICKS(2000));                        // 2 saniye bekle
   }
 }
 
@@ -80,10 +81,28 @@ static void TaskB(void *arg)
   (void)arg;
   TickType_t lastWake = xTaskGetTickCount();
   for (;;) {
-    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_SET);
-    HAL_Delay(30);
-    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_RESET);
-    vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(100));
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_SET);    // turuncu yan
+    HAL_Delay(1000);                                        // 1 saniye "çalış"
+    HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_RESET);  // turuncu sön
+    vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(2000));        // 2 saniyede bir
+  }
+}
+static void ButtonTask(void *arg)
+{
+  (void)arg;
+  uint32_t pressTick;
+  uint32_t lastAccepted = 0;
+  const uint32_t DEBOUNCE_MS = 50;
+
+  for (;;) {
+    if (xQueueReceive(btnQueue, &pressTick, portMAX_DELAY) == pdPASS) {
+      // Son kabul edilen basıştan bu yana 50 ms geçmediyse: sıçrama, yok say
+      if ((pressTick - lastAccepted) < pdMS_TO_TICKS(DEBOUNCE_MS)) {
+        continue;
+      }
+      lastAccepted = pressTick;
+      HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_15);
+    }
   }
 }
 /* USER CODE END 0 */
@@ -145,8 +164,10 @@ int main(void)
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
+  btnQueue = xQueueCreate(8, sizeof(uint32_t));
   xTaskCreate(TaskA, "TaskA", 256, NULL, 1, NULL);
   xTaskCreate(TaskB, "TaskB", 256, NULL, 2, NULL);
+  xTaskCreate(ButtonTask, "Button", 256, NULL, 3, NULL);
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
 
@@ -355,13 +376,25 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(MEMS_INT2_GPIO_Port, &GPIO_InitStruct);
 
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI0_IRQn, 6, 0);
+  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
+
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
-
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  if (GPIO_Pin == GPIO_PIN_0) {
+    BaseType_t woken = pdFALSE;
+    uint32_t t = xTaskGetTickCountFromISR();
+    xQueueSendFromISR(btnQueue, &t, &woken);
+    portYIELD_FROM_ISR(woken);
+  }
+}
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
