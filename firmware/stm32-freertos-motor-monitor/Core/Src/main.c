@@ -54,6 +54,7 @@ const osThreadAttr_t defaultTask_attributes = {
 };
 /* USER CODE BEGIN PV */
 static QueueHandle_t btnQueue;
+static TaskHandle_t imuTaskHandle;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -104,7 +105,7 @@ static void ButtonTask(void *arg)
         continue;
       }
       lastAccepted = pressTick;
-      HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_15);
+      xTaskNotifyGive(imuTaskHandle);   // ImuTask'a "temizle" dürtmesi gönder
     }
   }
 }
@@ -153,6 +154,7 @@ static void ImuTask(void *arg)
   const int16_t  TILT_LIMIT      = 11800;  // yaklaşık 45 derece
   const uint32_t CONFIRM_SAMPLES = 50;     // 50 x 10 ms = 500 ms
   uint32_t tiltCount = 0;
+  int latched = 0;   // 1 = arıza kilitli
   TickType_t lastWake = xTaskGetTickCount();
 
   for (;;) {
@@ -171,9 +173,18 @@ static void ImuTask(void *arg)
       tiltCount = 0;
     }
 
-    int rollover = (tiltCount >= CONFIRM_SAMPLES);
+    if (tiltCount >= CONFIRM_SAMPLES) {
+      latched = 1;   // devrilme onaylandı: kilitle
+    }
 
-    if (rollover) {
+    // Butondan dürtme geldiyse ve kart artık düzse: kilidi aç
+    if (ulTaskNotifyTake(pdTRUE, 0) > 0) {
+      if (!tilted) {
+        latched = 0;
+      }
+    }
+
+    if (latched) {
       HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
       HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, GPIO_PIN_SET);
     } else {
@@ -248,7 +259,7 @@ int main(void)
   //xTaskCreate(TaskA, "TaskA", 256, NULL, 1, NULL);
   //xTaskCreate(TaskB, "TaskB", 256, NULL, 2, NULL);
   xTaskCreate(ButtonTask, "Button", 256, NULL, 3, NULL);
-  xTaskCreate(ImuTask, "Imu", 256, NULL, 4, NULL);
+  xTaskCreate(ImuTask, "Imu", 256, NULL, 4, &imuTaskHandle);
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
 
@@ -500,7 +511,6 @@ static void MX_GPIO_Init(void)
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
   if (GPIO_Pin == GPIO_PIN_0) {
-	for (volatile uint32_t i = 0; i < 20000000; i++) { }   // DENEY: ISR'yi bilerek uzat
     BaseType_t woken = pdFALSE;
     uint32_t t = xTaskGetTickCountFromISR();
     xQueueSendFromISR(btnQueue, &t, &woken);
