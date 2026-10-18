@@ -40,10 +40,6 @@ The ISR only puts a timestamp into a queue and returns; all processing happens i
 - **Latched safe state.** Once confirmed, the fault stays active even if the board is put back level. It is cleared only by an explicit command, and only if the fault condition is gone.
 - **First-SPI-transfer bug.** The first `WHO_AM_I` read returned `0xFF`. With CPOL = High, HAL enables the SPI peripheral on the first transfer, so SCK jumped from low to high *after* chip select was already low and the sensor lost sync. Fix: enable SPI before the first transaction.
 
-## Lab notes
-
-- [Lab 01 – `vTaskDelay` vs `vTaskDelayUntil`](docs/lab01-scheduling.md)
-
 ## Hardware
 
 | Part | Role | Status |
